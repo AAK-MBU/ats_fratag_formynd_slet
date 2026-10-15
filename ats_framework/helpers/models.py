@@ -1,11 +1,12 @@
 """SQLAlchemy-modeller samt engine/session for RPA-databasen.
 
-Al DB-adgang i processen går gennem dette modul og
-``ats_framework.helpers.formynd_db`` / ``ats_framework.helpers.rpa_db`` —
-aldrig rå SQL-strenge.
+Al adgang til ``formynd``-skemaet går gennem dette modul og
+``ats_framework.helpers.formynd_db`` — aldrig rå SQL-strenge. Konstanter i
+``rpa.Constants`` læses via ``RPAConnection`` (se
+``ats_framework.helpers.rpa_db``).
 
 Modellerne er de tabeller i ``formynd``-skemaet, sletningen rører (``Sag`` og
-de tabeller, der bærer et ``SagId``), samt ``rpa.Constants``. Kolonnerne er
+de tabeller, der bærer et ``SagId``). Kolonnerne er
 de samme som modellerne i ats_fratag_formynd's ``helpers/models.py``, som ejer
 skemaet (DDL'en ligger i ats_fratag_formynd's ``db/20_tabeller.sql``).
 
@@ -181,16 +182,6 @@ class ProcesEventLog(Base):
         DateTime, nullable=False, server_default=text("SYSUTCDATETIME()")
     )
     CreatedBy: Mapped[str | None] = mapped_column(String(100))
-
-
-class Constant(Base):
-    """Global konfigurationsværdi i tabellen ``[RPA].[rpa].[Constants]`` (skrivebeskyttet)."""
-
-    __tablename__ = "Constants"
-    __table_args__ = {"schema": "rpa"}
-
-    name: Mapped[str] = mapped_column(String(255), primary_key=True)
-    value: Mapped[str | None] = mapped_column(Text)
 
 
 def _to_sqlalchemy_url(conn: str) -> str:

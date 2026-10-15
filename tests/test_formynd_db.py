@@ -1,7 +1,7 @@
 """Tests af læsning og sletning af sager i formynd mod en in-memory SQLite-DB.
 
-Modellerne ligger i skemaerne ``formynd`` og ``rpa``, så der ATTACHes en
-``:memory:``-database pr. skemanavn. ``SYSUTCDATETIME()`` (brugt af
+Modellerne ligger i skemaet ``formynd``, så der ATTACHes en
+``:memory:``-database under det navn. ``SYSUTCDATETIME()`` (brugt af
 server_defaults) registreres som SQL-funktion, og BigInteger renderes som
 INTEGER, da SQLite kun auto-inkrementerer en INTEGER PRIMARY KEY.
 ``models._session_factory`` overskrives, så den rigtige ``db_session`` bruger
@@ -17,9 +17,8 @@ from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from ats_framework.helpers import formynd_db, models, rpa_db
+from ats_framework.helpers import formynd_db, models
 from ats_framework.helpers.models import (
-    Constant,
     ProcesEventLog,
     Sag,
     SagESDHReference,
@@ -45,7 +44,6 @@ def engine(monkeypatch):
     @event.listens_for(engine, "connect")
     def _setup(dbapi_conn, _record):
         dbapi_conn.execute("ATTACH DATABASE ':memory:' AS formynd")
-        dbapi_conn.execute("ATTACH DATABASE ':memory:' AS rpa")
         dbapi_conn.create_function("SYSUTCDATETIME", 0, lambda: NOW.isoformat(sep=" "))
 
     models.Base.metadata.create_all(engine)
@@ -221,13 +219,3 @@ def test_delete_rolls_back_when_a_delete_fails(engine):
     assert _count(engine, Sag, sag_id) == 1
     assert _count(engine, SagNotifikation, sag_id) == 2
     assert _count(engine, ProcesEventLog, sag_id) == 1
-
-
-def test_get_constant(engine):
-    with Session(engine) as s:
-        s.add(Constant(name="smtp_port", value="25"))
-        s.commit()
-
-    assert rpa_db.get_constant("smtp_port") == "25"
-    with pytest.raises(LookupError):
-        rpa_db.get_constant("findes_ikke")

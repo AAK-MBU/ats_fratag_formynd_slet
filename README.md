@@ -112,7 +112,7 @@ uv run python main.py --queue --process
 | `[formynd].[Sag]` | læser `SagId`, `SagType`, `SlutDato`, `ErAktiv`; sletter sagen |
 | `[formynd].[SagPartSvar]`, `[SagNotifikation]`, `[SagESDHReference]` | sletter sagens rækker |
 | `[formynd].[ProcesEventLog]` | sletter sagens rækker; skriver og læser slettelog-rækker |
-| `[rpa].[Constants]` | mail-opsætning |
+| `[rpa].[Constants]` via `mbu_rpa_core.RPAConnection` | mail-opsætning |
 | ATS `GET /workqueues/{id}/items` | læser køens referencer, så eksisterende items ikke oprettes igen |
 
 ## Projektstruktur
@@ -132,4 +132,4 @@ uv run pytest
 uv run ruff check . && uv run ruff format --check .
 ```
 
-Testene kører isoleret. Database- og SMTP-kald monkeypatches; `formynd_db` og `rpa_db` testes mod en in-memory SQLite-database med ORM-modellerne, der kontrollerer hvilke rækker der slettes, slettelog-rækken og at intet ændres ved afvisning eller fejl. CI kører ruff. PR'er til `main` gates af **version-gate** (`.github/workflows/version-gate.yml`): er `version` i `pyproject.toml` ikke højere end på `main`, fejler checket og beder i en PR-kommentar om én label, `major`, `minor` eller `bugfix`. CI skriver så den nye version i `pyproject.toml` og pusher den til PR'ens branch.
+Testene kører isoleret. Database- og SMTP-kald monkeypatches; `formynd_db` testes mod en in-memory SQLite-database med ORM-modellerne, der kontrollerer hvilke rækker der slettes, slettelog-rækken og at intet ændres ved afvisning eller fejl. CI kører ruff. PR'er til `main` gates af **version-gate** (`.github/workflows/version-gate.yml`): er `version` i `pyproject.toml` ikke højere end på `main`, fejler checket og beder i en PR-kommentar om én label, `major`, `minor` eller `bugfix`. CI skriver så den nye version i `pyproject.toml` og pusher den til PR'ens branch.
