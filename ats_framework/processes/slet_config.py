@@ -26,7 +26,7 @@ SOURCE_COMPONENT = PROCESS_NAME
 # ----------------------
 # Rapport-mails (navne på konstanter i rpa.Constants)
 # ----------------------
-RECIPIENTS_CONSTANT = "rpa_team_email"  # JSON-liste eller kommasepareret
+RECIPIENTS_CONSTANT = "E-mail"  # JSON-liste eller kommasepareret
 SENDER_CONSTANT = "e-mail_noreply"
 SMTP_SERVER_CONSTANT = "smtp_adm_server"
 SMTP_PORT_CONSTANT = "smtp_port"

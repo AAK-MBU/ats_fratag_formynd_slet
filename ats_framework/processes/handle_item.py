@@ -88,7 +88,7 @@ def handle_dry_run(data: dict) -> str:
         f"(før {escape(str(data.get('frist')))}).</p>"
         + _sager_table(kandidater)
         + "<p>Sletning omfatter sagens rækker i Sag, SagESDHReference, "
-        "SagNotifikation, SagPartSvar og ProcesEventLog i skemaet formynd.</p>"
+        "SagNotifikation, SagPartSvar og ProcesEventLog i skemaet formynd på RPA databasen.</p>"
         "<p>Sæt robotten til at slette ved at ændre DRY_RUN=False i "
         "slet_config.py (repo: ats_fratag_formynd_slet).</p>"
     )
