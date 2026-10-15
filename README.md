@@ -63,7 +63,7 @@ Sager hvis `SlutDato` ligger før `frist`, men som stadig har `ErAktiv = 1`, sle
 
 ## Kør
 
-Kræver Python 3.13 og [uv](https://docs.astral.sh/uv/). `DBCONNECTIONSTRINGPROD` bruges gennem pyodbc og kræver en ODBC-driver til SQL Server.
+Kræver Python 3.13 og [uv](https://docs.astral.sh/uv/). `DBCONNECTIONSTRINGPROD` bruges gennem SQLAlchemy og pyodbc og kræver en ODBC-driver til SQL Server. Værdien må være en rå ODBC-streng (`Driver={...};Server=...`) eller en SQLAlchemy-URL.
 
 ```sh
 uv sync
@@ -112,7 +112,7 @@ uv run python main.py --queue --process
 | `[formynd].[Sag]` | læser `SagId`, `SagType`, `SlutDato`, `ErAktiv`; sletter sagen |
 | `[formynd].[SagPartSvar]`, `[SagNotifikation]`, `[SagESDHReference]` | sletter sagens rækker |
 | `[formynd].[ProcesEventLog]` | sletter sagens rækker; skriver og læser slettelog-rækker |
-| `[rpa].[Constants]` via `mbu_rpa_core.RPAConnection` | mail-opsætning |
+| `[rpa].[Constants]` | mail-opsætning |
 | ATS `GET /workqueues/{id}/items` | læser køens referencer, så eksisterende items ikke oprettes igen |
 
 ## Projektstruktur
@@ -120,7 +120,7 @@ uv run python main.py --queue --process
 ```
 main.py                        entrypoint: --queue / --process / --finalize
 ats_framework/core/            frameworkets løkker; delegerer til processes/
-ats_framework/helpers/         ATS-kald, formynd-SQL, RPA-opslag, mail, TLS
+ats_framework/helpers/         ATS-kald, ORM-modeller og -forespørgsler, mail, TLS
 ats_framework/processes/       slet_config, populate, handle_item
 tests/                         pytest
 ```
@@ -132,4 +132,4 @@ uv run pytest
 uv run ruff check . && uv run ruff format --check .
 ```
 
-Testene kører isoleret. Database- og SMTP-kald monkeypatches; SQL'en i `formynd_db` testes mod en fake cursor, der kontrollerer rækkefølgen af DELETE-kald, slettelog-rækken og at transaktionen ikke committes ved afvisning eller fejl. CI kører ruff. PR'er til `main` gates af **version-gate** (`.github/workflows/version-gate.yml`): er `version` i `pyproject.toml` ikke højere end på `main`, fejler checket og beder i en PR-kommentar om én label, `major`, `minor` eller `bugfix`. CI skriver så den nye version i `pyproject.toml` og pusher den til PR'ens branch.
+Testene kører isoleret. Database- og SMTP-kald monkeypatches; `formynd_db` og `rpa_db` testes mod en in-memory SQLite-database med ORM-modellerne, der kontrollerer hvilke rækker der slettes, slettelog-rækken og at intet ændres ved afvisning eller fejl. CI kører ruff. PR'er til `main` gates af **version-gate** (`.github/workflows/version-gate.yml`): er `version` i `pyproject.toml` ikke højere end på `main`, fejler checket og beder i en PR-kommentar om én label, `major`, `minor` eller `bugfix`. CI skriver så den nye version i `pyproject.toml` og pusher den til PR'ens branch.

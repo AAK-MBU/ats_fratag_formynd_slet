@@ -1,8 +1,8 @@
 """Læsning og sletning af sager i ``[RPA].[formynd]``.
 
-Går gennem ``mbu_rpa_core.database.connection.RPAConnection`` og dermed
-forbindelsesstrengen i miljøvariablen ``DBCONNECTIONSTRINGPROD``. Kontoen skal
-have SELECT, INSERT og DELETE på skemaet ``formynd``.
+Går gennem ORM-modellerne og ``db_session`` i ``ats_framework.helpers.models``
+og dermed forbindelsesstrengen i miljøvariablen ``DBCONNECTIONSTRINGPROD``.
+Kontoen skal have SELECT, INSERT og DELETE på skemaet ``formynd``.
 
 En sag slettes i én transaktion: reglen tjekkes igen med lås på sagen, alle
 sagens rækker slettes, og sletningen skrives i ``formynd.ProcesEventLog`` som
@@ -14,26 +14,40 @@ from __future__ import annotations
 
 import json
 import logging
-from contextlib import contextmanager
 from typing import TYPE_CHECKING
 
+from sqlalchemy import delete, select
+
+from ats_framework.helpers.models import (
+    ProcesEventLog,
+    Sag,
+    SagESDHReference,
+    SagNotifikation,
+    SagPartSvar,
+    db_session,
+)
 from ats_framework.processes import slet_config
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
     from datetime import date
+
+    from sqlalchemy.orm import Session
 
 logger = logging.getLogger(__name__)
 
-# Tabellerne med sagens rækker ud over formynd.Sag, i sletterækkefølge. De tre
+# Modellerne med sagens rækker ud over formynd.Sag, i sletterækkefølge. De tre
 # første har en fremmednøgle til Sag. ProcesEventLog har ingen, men dens
 # payloads indeholder de mails, der er sendt om sagen. En ny tabel med
-# fremmednøgle til Sag, der ikke står her, får DELETE på Sag til at fejle, og
-# så rulles sletningen tilbage.
-CHILD_TABLES = ("SagPartSvar", "SagNotifikation", "SagESDHReference", "ProcesEventLog")
+# fremmednøgle til Sag, der ikke står her, får sletningen af Sag til at fejle,
+# og så rulles sletningen tilbage.
+CHILD_TABLES = (SagPartSvar, SagNotifikation, SagESDHReference, ProcesEventLog)
 
 SLETTELOG_EVENT_TYPE = "SLETNING"
 SLETTELOG_EVENT_ACTION = "SAG_SLETTET"
+
+# Låser sagsrækken til transaktionens afslutning, så reglen ikke kan ændre sig
+# mellem tjek og sletning. Hintet gælder kun SQL Server.
+_LOCK_HINT = "WITH (UPDLOCK, HOLDLOCK)"
 
 
 class DeleteRefused(Exception):
@@ -48,36 +62,9 @@ class DeleteRefused(Exception):
         self.reason = reason
 
 
-@contextmanager
-def _transaction() -> Iterator:
-    """Åbner en transaktion mod RPA-databasen og giver dens cursor.
-
-    Transaktionen committes, når blokken afsluttes uden fejl, og rulles
-    tilbage ved en fejl.
-
-    Yields:
-        En pyodbc-cursor.
-    """
-    from mbu_rpa_core.database.connection import RPAConnection  # noqa: PLC0415
-
-    with RPAConnection(db_env="PROD", commit=False) as conn:
-        yield conn.cursor
-        conn.conn.commit()
-
-
-def _rows(cursor) -> list[dict]:
-    """Omsætter cursorens resultat til dicts nøglet på kolonnenavn."""
-    columns = [c[0] for c in cursor.description]
-    return [dict(zip(columns, row, strict=True)) for row in cursor.fetchall()]
-
-
-def _sag(row: dict) -> dict:
-    """Gør en sagsrække JSON-venlig til kø-items."""
-    return {
-        "sagId": row["SagId"],
-        "sagType": row["SagType"],
-        "slutDato": row["SlutDato"].isoformat(),
-    }
+def _sag(sag_id: int, sag_type: str, slut_dato: date) -> dict:
+    """Gør en sag JSON-venlig til kø-items."""
+    return {"sagId": sag_id, "sagType": sag_type, "slutDato": slut_dato.isoformat()}
 
 
 def fetch_candidates(frist: date) -> dict:
@@ -95,17 +82,16 @@ def fetch_candidates(frist: date) -> dict:
             fordi lukningen ikke er gennemført. De slettes ikke.
             Hver sag er ``{"sagId", "sagType", "slutDato"}``.
     """
-    with _transaction() as cursor:
-        cursor.execute(
-            "SELECT SagId, SagType, SlutDato, ErAktiv FROM formynd.Sag "
-            "WHERE SlutDato < ? ORDER BY SagId",
-            frist,
-        )
-        rows = _rows(cursor)
+    with db_session() as session:
+        rows = session.execute(
+            select(Sag.SagId, Sag.SagType, Sag.SlutDato, Sag.ErAktiv)
+            .where(Sag.SlutDato < frist)
+            .order_by(Sag.SagId)
+        ).all()
 
     result = {
-        "kandidater": [_sag(r) for r in rows if not r["ErAktiv"]],
-        "ikkeLukket": [_sag(r) for r in rows if r["ErAktiv"]],
+        "kandidater": [_sag(*r[:3]) for r in rows if not r.ErAktiv],
+        "ikkeLukket": [_sag(*r[:3]) for r in rows if r.ErAktiv],
     }
     logger.info(
         "Found %d candidates and %d expired sager not closed (frist %s)",
@@ -136,49 +122,49 @@ def delete_sag(sag_id: int, frist: date) -> dict:
         DeleteRefused: Hvis sagen er aktiv, ikke er udløbet længe nok, eller
             hverken findes eller er slettet før.
     """
-    with _transaction() as cursor:
-        cursor.execute(
-            "SELECT SagType, SlutDato, ErAktiv FROM formynd.Sag "
-            "WITH (UPDLOCK, HOLDLOCK) WHERE SagId = ?",
-            sag_id,
-        )
-        rows = _rows(cursor)
-        if not rows:
-            return _already_deleted(cursor, sag_id)
+    with db_session() as session:
+        sag = session.execute(
+            select(Sag.SagType, Sag.SlutDato, Sag.ErAktiv)
+            .where(Sag.SagId == sag_id)
+            .with_hint(Sag, _LOCK_HINT, "mssql")
+        ).one_or_none()
+        if sag is None:
+            return _already_deleted(session, sag_id)
 
-        sag = rows[0]
-        if sag["ErAktiv"]:
+        if sag.ErAktiv:
             raise DeleteRefused(f"Sag {sag_id} er stadig aktiv")
-        if sag["SlutDato"] >= frist:
+        if sag.SlutDato >= frist:
             raise DeleteRefused(
-                f"Sag {sag_id} har SlutDato {sag['SlutDato']}, som ikke er før {frist}"
+                f"Sag {sag_id} har SlutDato {sag.SlutDato}, som ikke er før {frist}"
             )
 
         raekker = {}
-        for table in (*CHILD_TABLES, "Sag"):
-            cursor.execute(f"DELETE FROM formynd.{table} WHERE SagId = ?", sag_id)
-            raekker[table] = cursor.rowcount
+        for model in (*CHILD_TABLES, Sag):
+            deleted = session.execute(
+                delete(model).where(model.SagId == sag_id),
+                execution_options={"synchronize_session": False},
+            )
+            raekker[model.__tablename__] = deleted.rowcount
 
         payload = {
-            "sagType": sag["SagType"],
-            "slutDato": sag["SlutDato"].isoformat(),
+            "sagType": sag.SagType,
+            "slutDato": sag.SlutDato.isoformat(),
             "frist": frist.isoformat(),
             "raekker": raekker,
         }
-        cursor.execute(
-            "INSERT INTO formynd.ProcesEventLog "
-            "(SagId, EventType, EventAction, EventResult, SourceSystem, "
-            "SourceComponent, EventPayload, CreatedBy) "
-            "OUTPUT INSERTED.EventId "
-            "VALUES (?, ?, ?, 'SUCCESS', 'PYTHON', ?, ?, ?)",
-            sag_id,
-            SLETTELOG_EVENT_TYPE,
-            SLETTELOG_EVENT_ACTION,
-            slet_config.SOURCE_COMPONENT,
-            json.dumps(payload),
-            slet_config.SOURCE_COMPONENT,
+        sletning = ProcesEventLog(
+            SagId=sag_id,
+            EventType=SLETTELOG_EVENT_TYPE,
+            EventAction=SLETTELOG_EVENT_ACTION,
+            EventResult="SUCCESS",
+            SourceSystem="PYTHON",
+            SourceComponent=slet_config.SOURCE_COMPONENT,
+            EventPayload=json.dumps(payload),
+            CreatedBy=slet_config.SOURCE_COMPONENT,
         )
-        sletning_id = cursor.fetchone()[0]
+        session.add(sletning)
+        session.flush()
+        sletning_id = sletning.EventId
 
     logger.info("Deleted sag %s: %s", sag_id, raekker)
     return {
@@ -189,25 +175,27 @@ def delete_sag(sag_id: int, frist: date) -> dict:
     }
 
 
-def _already_deleted(cursor, sag_id: int) -> dict:
+def _already_deleted(session: Session, sag_id: int) -> dict:
     """Slår en sag, der ikke findes, op i slettelogen.
 
     Raises:
         DeleteRefused: Hvis sagen heller ikke står i slettelogen.
     """
-    cursor.execute(
-        "SELECT TOP (1) EventId FROM formynd.ProcesEventLog "
-        "WHERE SagId = ? AND EventType = ? AND EventAction = ? ORDER BY EventId",
-        sag_id,
-        SLETTELOG_EVENT_TYPE,
-        SLETTELOG_EVENT_ACTION,
+    sletning_id = session.scalar(
+        select(ProcesEventLog.EventId)
+        .where(
+            ProcesEventLog.SagId == sag_id,
+            ProcesEventLog.EventType == SLETTELOG_EVENT_TYPE,
+            ProcesEventLog.EventAction == SLETTELOG_EVENT_ACTION,
+        )
+        .order_by(ProcesEventLog.EventId)
+        .limit(1)
     )
-    row = cursor.fetchone()
-    if row is None:
+    if sletning_id is None:
         raise DeleteRefused(f"Sag {sag_id} findes ikke")
     return {
         "sagId": sag_id,
         "status": "allerede_slettet",
         "raekker": {},
-        "sletningId": row[0],
+        "sletningId": sletning_id,
     }

@@ -1,10 +1,13 @@
 """Opslag af konstanter i RPA-databasen.
 
-Går gennem ``mbu_rpa_core.database.connection.RPAConnection``, som læser
-``[rpa].[Constants]`` via forbindelsesstrengen i
-miljøvariablen ``DBCONNECTIONSTRINGPROD``. ``RPAConnection`` importeres først
-ved kaldet, da den trækker pyodbc og dermed en ODBC-driver med sig.
+Læser tabellen ``[rpa].[Constants]`` gennem ORM-modellen ``Constant`` og
+``db_session`` i ``ats_framework.helpers.models``, dvs. via
+forbindelsesstrengen i miljøvariablen ``DBCONNECTIONSTRINGPROD``.
 """
+
+from sqlalchemy import select
+
+from ats_framework.helpers.models import Constant, db_session
 
 
 def get_constant(name: str) -> str:
@@ -15,8 +18,12 @@ def get_constant(name: str) -> str:
 
     Returns:
         Konstantens værdi.
-    """
-    from mbu_rpa_core.database.connection import RPAConnection  # noqa: PLC0415
 
-    with RPAConnection(db_env="PROD", commit=False) as conn:
-        return conn.get_constant(name)["value"]
+    Raises:
+        LookupError: Hvis der ikke findes en konstant med det navn.
+    """
+    with db_session() as session:
+        value = session.scalar(select(Constant.value).where(Constant.name == name))
+    if value is None:
+        raise LookupError(f"Constant {name!r} not found in rpa.Constants")
+    return value

@@ -8,8 +8,10 @@ dependencies = [
     "automation-server-client @ git+https://github.com/odense-rpa/automation-server-client.git",
     "mbu-rpa-core @ git+https://github.com/AAK-MBU/MBU-rpa-core.git",
     "pillow",
+    "pyodbc>=5.3.0",
     "python-dotenv",
     "requests",
+    "sqlalchemy>=2.0",
     "tzdata",
 ]
 
